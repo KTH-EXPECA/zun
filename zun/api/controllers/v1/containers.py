@@ -15,6 +15,7 @@
 
 import shlex
 
+from keystoneauth1 import exceptions as ksa_exc
 from neutronclient.common import exceptions as n_exc
 from oslo_log import log as logging
 from oslo_utils import strutils
@@ -29,7 +30,6 @@ from zun.api.controllers.v1.views import actions_view
 from zun.api.controllers.v1.views import containers_view as view
 from zun.api import utils as api_utils
 from zun.api import validation
-from zun.common import clients
 from zun.common import consts
 from zun.common import context as zun_context
 from zun.common import exception
@@ -40,7 +40,6 @@ from zun.common import policy
 from zun.common import quota
 from zun.common import utils
 import zun.conf
-from zun.device import cyborg
 from zun.network import model as network_model
 from zun.network import neutron
 from zun import objects
@@ -437,60 +436,30 @@ class ContainersController(base.Controller):
                            action="container:create:requested_destination")
 
         container_dict['status'] = consts.CREATING
+        annotations = container_dict.setdefault('annotations', {})
+        hints = container_dict.get('hints', {})
+
+        reservation_id = hints.get('reservation')
+
         extra_spec = {}
-        extra_spec['hints'] = container_dict.get('hints', None)
+        extra_spec['hints'] = hints
         extra_spec['pci_requests'] = pci_req
         extra_spec['availability_zone'] = container_dict.get(
             'availability_zone')
         extra_spec['requested_host'] = requested_host
 
+
         device_profiles = container_dict.pop('device_profiles', None)
         if device_profiles:
             api_utils.version_check('device_profiles', '1.41')
 
-            requested_resources = extra_spec.setdefault('requested_resources', [])
-            # Setting group_policy is required when adding more request groups
-            extra_spec.setdefault('group_policy', 'none')
-            device_groups = (
-                cyborg.CyborgClient(context).get_request_groups(
-                    device_profiles))
-
-            for requestor_id, req_grp in device_groups.items():
-                resources = {}
-                required_traits = set()
-                forbidden_traits = set()
-                for key, value in req_grp.items():
-                    prefix, ident = key.split(":")
-                    if prefix == "resources":
-                        # ident == the resource class for "resources:..." fields
-                        resources[ident] = int(value)
-                    elif prefix.startswith("trait"):
-                        if value == "required":
-                            required_traits.add(ident)
-                        elif value == "forbidden":
-                            forbidden_traits.add(ident)
-                        else:
-                            pass
-                    else:
-                        pass
-
-                requested_resources.append(
-                    objects.RequestGroup(context,
-                        # Cyborg uses nested providers to manage devices
-                        use_same_provider=False,
-                        requestor_id=requestor_id,
-                        resources=resources,
-                        required_traits=required_traits,
-                        forbidden_traits=forbidden_traits
-                    )
-                )
-
             # (ab)use the annotations dictionary to store the device profiles requested
-            # so we can use them in the compute agent, if need be. The K8s driver
+            # so we can use them in the compute agent, if need be. Example: K8s driver
             # uses this to map the profiles to K8s device plugin resource requests.
-            container_dict['annotations'] = {
-                utils.DEVICE_PROFILE_ANNOTATION: ",".join(device_profiles)
-            }
+            annotations[utils.DEVICE_PROFILE_ANNOTATION] = ",".join(device_profiles)
+
+        if reservation_id:
+            annotations[utils.RESERVATION_ANNOTATION] = reservation_id
 
         new_container = objects.Container(context, **container_dict)
         new_container.create(context)

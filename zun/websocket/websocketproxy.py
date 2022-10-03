@@ -18,9 +18,12 @@ Leverages websockify.py by Joel Martin
 """
 
 import errno
+import hashlib
+from pathlib import Path
 import select
 import socket
 import sys
+import tempfile
 import time
 
 import docker
@@ -32,6 +35,7 @@ import websockify
 from zun.common import context
 from zun.common import exception
 from zun.common.i18n import _
+from zun.compute import api as compute_api
 import zun.conf
 from zun import objects
 from zun.websocket.websocketclient import WebSocketClient
@@ -40,7 +44,27 @@ LOG = logging.getLogger(__name__)
 CONF = zun.conf.CONF
 
 
+def _admin_context():
+    return context.get_admin_context(all_projects=True)
+
+
+def _write_sock_optfile(contents):
+    """Write some config file to storage.
+
+    This is useful for libraries that require some configuration be read from a file,
+    yet we receive all websocket options via RPC transport as raw text.
+    """
+    if not contents:
+        return None
+    hash = hashlib.sha256(contents.encode("utf-8")).hexdigest()
+    path = Path(tempfile.gettempdir(), hash)
+    if not path.exists():
+        path.write_text(contents)
+    return path.absolute()
+
 class ZunProxyRequestHandlerBase(object):
+    compute_api: "compute_api.API" = None
+
     def verify_origin_proto(self, access_url, origin_proto):
         if not access_url:
             detail = _("No access_url available."
@@ -105,7 +129,7 @@ class ZunProxyRequestHandlerBase(object):
 
         if target in outs:
             while self.tqueue:
-                payload = self.tqueue.pop(0)
+                payload = self._prefix_payload('stdin', self.tqueue.pop(0))
                 remaining = self._send_buffer(payload, target)
                 if remaining is not None:
                     self.tqueue.appendleft(remaining)
@@ -124,7 +148,13 @@ class ZunProxyRequestHandlerBase(object):
                 buf = buf.encode()
             self.cqueue.append(buf)
 
-    def do_websocket_proxy(self, target):
+    def _prefix_payload(self, channel, payload):
+        if self.channels and channel in self.channels:
+            return chr(self.channels[channel]).encode('ascii') + payload
+        else:
+            return payload
+
+    def do_websocket_proxy(self, target, channels=None):
         """Proxy websocket link
 
         Proxy client WebSocket to normal target socket.
@@ -132,6 +162,7 @@ class ZunProxyRequestHandlerBase(object):
         self.cqueue = []
         self.tqueue = []
         self.c_pend = 0
+        self.channels = channels
         rlist = [self.request, target]
 
         if self.server.heartbeat:
@@ -194,7 +225,7 @@ class ZunProxyRequestHandlerBase(object):
         uuid = urlparse.parse_qs(query).get("uuid", [""]).pop()
         exec_id = urlparse.parse_qs(query).get("exec_id", [""]).pop()
 
-        ctx = context.get_admin_context(all_projects=True)
+        ctx = _admin_context()
 
         if uuidutils.is_uuid_like(uuid):
             container = objects.Container.get_by_uuid(ctx, uuid)
@@ -205,6 +236,11 @@ class ZunProxyRequestHandlerBase(object):
             self._new_exec_client(container, token, uuid, exec_id)
         else:
             self._new_websocket_client(container, token, uuid)
+
+        # TODO: here is where we could perhaps trigger a quick websocket resize
+        # to an already open client, if exec_id is not specified AND resize is given
+        # in the request. It should just connect and immediately send the request,
+        # then send a client disconnect? Or maybe the other end should disconnect :p
 
     def _new_websocket_client(self, container, token, uuid):
         if token != container.websocket_token:
@@ -219,8 +255,22 @@ class ZunProxyRequestHandlerBase(object):
             target_url = container.websocket_url
             escape = "~"
             close_wait = 0.5
+            try:
+                ws_opts = self.compute_api.container_get_websocket_opts(
+                    _admin_context(), container)
+            except Exception as e:
+                LOG.exception("failed to get websocket options")
+                # Only zun-compute agents supporting API >=1.2 have this method.
+                ws_opts = {}
+            options = {}
+            if "ca" in ws_opts or "cert" in ws_opts or "key" in ws_opts:
+                options["sslopt"] = {
+                    "certfile": _write_sock_optfile(ws_opts.get("cert")),
+                    "keyfile": _write_sock_optfile(ws_opts.get("key")),
+                    "ca_certs": _write_sock_optfile(ws_opts.get("ca")),
+                }
             wscls = WebSocketClient(host_url=target_url, escape=escape,
-                                    close_wait=close_wait)
+                                    close_wait=close_wait, **options)
             wscls.connect()
             self.target = wscls
         else:
@@ -228,7 +278,7 @@ class ZunProxyRequestHandlerBase(object):
 
         # Start proxying
         try:
-            self.do_websocket_proxy(self.target.ws)
+            self.do_websocket_proxy(self.target.ws, channels=ws_opts.get("channels"))
         except Exception:
             if self.target.ws:
                 self.target.ws.close()
@@ -297,6 +347,7 @@ class ZunProxyRequestHandlerBase(object):
 class ZunProxyRequestHandler(ZunProxyRequestHandlerBase,
                              websockify.ProxyRequestHandler):
     def __init__(self, *args, **kwargs):
+        self.compute_api = compute_api.API(_admin_context())
         websockify.ProxyRequestHandler.__init__(self, *args, **kwargs)
 
     def socket(self, *args, **kwargs):

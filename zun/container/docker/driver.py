@@ -15,6 +15,7 @@ import datetime
 import errno
 import eventlet
 import functools
+import itertools
 import types
 
 from docker import errors
@@ -35,7 +36,6 @@ import zun.conf
 from zun.container.docker import host
 from zun.container.docker import utils as docker_utils
 from zun.container import driver
-from zun.container import oci
 from zun.image import driver as img_driver
 from zun.network import network as zun_network
 from zun import objects
@@ -247,7 +247,7 @@ class DockerDriver(driver.BaseDriver, driver.ContainerDriver,
                 LOG.warning("Unable to read image data from tarfile")
 
     def create(self, context, container, image, requested_networks,
-               requested_volumes, device_attachments=None):
+               requested_volumes):
         with docker_utils.docker_client() as docker:
             network_driver = zun_network.driver(context=context,
                                                 docker_api=docker)
@@ -335,29 +335,6 @@ class DockerDriver(driver.BaseDriver, driver.ContainerDriver,
                 timeout = container.healthcheck.get('timeout', 0)
                 healthcheck['timeout'] = timeout * 10 ** 9
                 kwargs['healthcheck'] = healthcheck
-
-            if device_attachments:
-                oci_config = oci.merge_oci_runtime_config({}, *device_attachments)
-                if not kwargs['environment']:
-                    kwargs['environment'] = {}
-                for env in oci_config['process']['env']:
-                    env_var, env_value = env.split("=")
-                    kwargs['environment'][env_var] = env_value
-                host_config['binds'].update({
-                    mnt['source']: {
-                        'bind': mnt['destination'],
-                        'mode': mnt.get('mode', 'ro'),
-                    }
-                    for mnt in oci_config['mounts']
-                })
-                kwargs['volumes'].extend([
-                    mnt['destination'] for mnt in oci_config['mounts']
-                ])
-                host_config['devices'] = []
-                for dev in oci_config['linux']['devices']:
-                    # TODO: actually look up cgroups for access info
-                    host_config['devices'].append(
-                        f'{dev["path"]}:{dev["path"]}:rw')
 
             kwargs['host_config'] = docker.create_host_config(**host_config)
             response = docker.create_container(image_repo, **kwargs)
@@ -948,6 +925,9 @@ class DockerDriver(driver.BaseDriver, driver.ContainerDriver,
               + ATTACH_FLAG
         return url
 
+    def get_websocket_opts(self, context, container):
+        return {}
+
     @check_container_id
     @wrap_docker_error
     def resize(self, context, container, height, width):
@@ -1200,9 +1180,9 @@ class DockerDriver(driver.BaseDriver, driver.ContainerDriver,
             network_driver.remove_network(network)
 
     def create_capsule(self, context, capsule, image, requested_networks,
-                       requested_volumes, device_attachments=None):
+                       requested_volumes):
         capsule = self.create(context, capsule, image, requested_networks,
-                              requested_volumes, device_attachments=device_attachments)
+                              requested_volumes)
         self.start(context, capsule)
         for container in capsule.init_containers:
             self._create_container_in_capsule(context, capsule, container,
