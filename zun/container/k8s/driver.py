@@ -12,8 +12,10 @@
 # limitations under the License.
 import io
 import json
+import yaml
 import shlex
 import time
+import random
 from collections import defaultdict
 from pathlib import Path
 
@@ -26,12 +28,14 @@ from oslo_utils import units
 
 import zun.conf
 from zun import objects
+from zun.common import clients
 from zun.common import consts
 from zun.common import context as zun_context
 from zun.common import exception, utils
 from zun.common.docker_image import reference as docker_image
 from zun.container import driver
 from zun.container.k8s import exception as k8s_exc, host, mapping, network, volume
+from kubernetes.client import NetworkingV1Api
 
 CONF = zun.conf.CONF
 LOG = logging.getLogger(__name__)
@@ -39,6 +43,139 @@ LOG = logging.getLogger(__name__)
 # A fake "network id" for when we want to keep track of container
 # addresses but the driver is not configured to integrate w/ Neutron.
 UNDEFINED_NETWORK = "undefined_network"
+
+def generate_random_mac_addr() -> str:
+    return "02:00:00:%02x:%02x:%02x" % (random.randint(0, 255),
+                             random.randint(0, 255),
+                             random.randint(0, 255))
+
+def clone_network_attachment_definition(src_namespace: str, dest_namespace: str, worker_name: str, br_interface_name: str):
+
+    body = client.CustomObjectsApi().get_namespaced_custom_object(
+        group="k8s.cni.cncf.io",
+        version="v1",
+        plural="network-attachment-definitions",
+        namespace=src_namespace,
+        name=f"{worker_name}.{br_interface_name}",
+    )
+    body['metadata'] = { 'name':body['metadata']['name'], 'namespace':dest_namespace }
+    body_json = json.dumps(body)
+    client.CustomObjectsApi().create_namespaced_custom_object(
+        group="k8s.cni.cncf.io",
+        version="v1",
+        plural="network-attachment-definitions",
+        namespace=dest_namespace,
+        body=yaml.load(body_json,Loader=yaml.FullLoader),
+    )
+
+
+def patch_network_attachment_definition_config(namespace: str, worker_name: str, br_interface_name: str, key: str, value):
+
+    res = client.CustomObjectsApi().get_namespaced_custom_object(
+        group="k8s.cni.cncf.io",
+        version="v1",
+        plural="network-attachment-definitions",
+        namespace=namespace,
+        name=f"{worker_name}.{br_interface_name}",
+    )
+    config_dict = json.loads(res['spec']['config'])
+    config_dict[key] = value
+    config_json = json.dumps(config_dict)
+    patch_dict = {
+        'spec': {
+            'config':config_json,
+        }
+    }
+    patch_json = json.dumps(patch_dict)
+    client.CustomObjectsApi().patch_namespaced_custom_object(
+        group="k8s.cni.cncf.io",
+        version="v1",
+        plural="network-attachment-definitions",
+        namespace=namespace,
+        name=f"{worker_name}.{br_interface_name}",
+        body=yaml.load(patch_json,Loader=yaml.FullLoader),
+    )
+
+def patch_network_attachment_definition_plugin(namespace: str, worker_name: str, br_interface_name: str, key: str, value):
+
+    res = client.CustomObjectsApi().get_namespaced_custom_object(
+        group="k8s.cni.cncf.io",
+        version="v1",
+        plural="network-attachment-definitions",
+        namespace=namespace,
+        name=f"{worker_name}.{br_interface_name}",
+    )
+    config_dict = json.loads(res['spec']['config'])
+    config_dict['plugins'][0][key] = value
+    config_json = json.dumps(config_dict)
+    patch_dict = {
+        'spec': {
+            'config':config_json,
+        }
+    }
+    patch_json = json.dumps(patch_dict)
+    client.CustomObjectsApi().patch_namespaced_custom_object(
+        group="k8s.cni.cncf.io",
+        version="v1",
+        plural="network-attachment-definitions",
+        namespace=namespace,
+        name=f"{worker_name}.{br_interface_name}",
+        body=yaml.load(patch_json,Loader=yaml.FullLoader),
+    )
+
+def delete_network_attachment_definition(namespace: str, worker_name: str, br_interface_name: str):
+    client.CustomObjectsApi().delete_namespaced_custom_object(
+        group="k8s.cni.cncf.io",
+        version="v1",
+        plural="network-attachment-definitions",
+        namespace=namespace,
+        name=f"{worker_name}.{br_interface_name}",
+    )
+
+def list_network_attachment_definitions(namespace: str, worker_name: str) -> list:
+    res = client.CustomObjectsApi().list_namespaced_custom_object(
+        group="k8s.cni.cncf.io",
+        version="v1",
+        plural="network-attachment-definitions",
+        namespace=namespace,
+    )
+    return [ item['metadata']['name'].split('.')[1] for item in res['items'] ]
+
+def read_network_attachment_definition_config(namespace: str, worker_name: str, br_interface_name: str, key: str):
+    res = client.CustomObjectsApi().get_namespaced_custom_object(
+        group="k8s.cni.cncf.io",
+        version="v1",
+        plural="network-attachment-definitions",
+        namespace=namespace,
+        name=f"{worker_name}.{br_interface_name}",
+    )
+    config_dict = json.loads(res['spec']['config'])
+    if key in config_dict:
+        return config_dict[key]
+    else:
+        return None
+
+def network_attachment_definition_exists(namespace: str, worker_name: str, br_interface_name: str):
+    try:
+        res = client.CustomObjectsApi().get_namespaced_custom_object(
+            group="k8s.cni.cncf.io",
+            version="v1",
+            plural="network-attachment-definitions",
+            namespace=namespace,
+            name=f"{worker_name}.{br_interface_name}",
+        )
+    except Exception as e:
+        return False
+    
+    return True
+
+#clone_network_attachment_definition('default', 'e27227248c2b425ba4e2b2f548dbcd85', 'radio-host3-vm1', 'enp5s0np1')
+#patch_network_attachment_definition_config('default','radio-host3-vm1','enp5s0np1', 'taken', True)
+#patch_network_attachment_definition_config('e27227248c2b425ba4e2b2f548dbcd85','radio-host3-vm1','enp5s0np1', 'ipam', 'mammad')
+#delete_network_attachment_definition('e27227248c2b425ba4e2b2f548dbcd85','radio-host3-vm1','enp5s0np1')
+#patch_network_attachment_definition_config('default','radio-host3-vm1','enp5s0np1', 'taken', False)
+#list_network_attachment_definitions("default", 'radio-host3-vm1')
+#read_network_attachment_definition_config('default','radio-host3-vm1','enp5s0np1', 'taken2')
 
 
 def is_exception_like(api_exc: client.ApiException, code=None, message_like=None, **kwargs):
@@ -90,6 +227,11 @@ class K8sDriver(driver.ContainerDriver, driver.BaseDriver):
         self.volume_driver = volume.K8sConfigMap(self.core_v1)
 
         utils.spawn_n(self._watch_pods, admin_context)
+
+        # get neutron admin client
+        context = zun_context.get_admin_context()
+        self.neutron_client = clients.OpenStackClients(context).neutron()
+        self.ironic_client = clients.OpenStackClients(context).ironic()
 
     def _watch_pods(self, context):
         def _do_watch():
@@ -161,21 +303,669 @@ class K8sDriver(driver.ContainerDriver, driver.BaseDriver):
                     ns_name, default_network_policy)
                 LOG.info(f"Created default network policy for project {project_id}")
 
+    def parse_dot_seperated_networks_labels(self, container_labels):
+        networks_labels = {}
+        for whole_key in container_labels:
+            keys = whole_key.split('.')
+            if len(keys) <= 2:
+                continue
+            if keys[0] != "networks":
+                continue
+            if (not keys[1].isnumeric()) and (keys[1] != 'br'):
+                continue
+            if keys[1] not in networks_labels:
+                networks_labels[keys[1]] = {}
+            if keys[2] == "interface":
+                networks_labels[keys[1]] = {
+                    **networks_labels[keys[1]],
+                    "interface" : container_labels[whole_key]
+                }
+            if keys[2] == "ip":
+                networks_labels[keys[1]] = {
+                    **networks_labels[keys[1]],
+                    "ip" : container_labels[whole_key]
+                }
+        return networks_labels
+
+    def remove_networks_labels(self, container_labels):
+        new_labels = {}
+        for whole_key in container_labels:
+            new_labels = {**new_labels, whole_key:container_labels[whole_key]}
+            keys = whole_key.split('.')
+            if len(keys) <= 2:
+                continue
+            if keys[0] != "networks":
+                continue
+            del new_labels[whole_key]
+
+        return new_labels
+
+    def create_network_attachment_defs(self, reservation_id, container, requested_networks):
+
+        network_annotations = []
+        port_annotations = []
+
+        neutron_client = self.neutron_client
+
+        reservation_id_label = 'blazar.openstack.org/reservation_id'
+        project_id_label = 'blazar.openstack.org/project_id'
+        target_node = None
+        node_list = self.core_v1.list_node()
+        for node in node_list.items:
+            LOG.info(f"node labels: {node.metadata.labels}")
+            if (
+                reservation_id_label in node.metadata.labels and
+                project_id_label in node.metadata.labels
+            ):
+                if (
+                    node.metadata.labels[reservation_id_label] == reservation_id and 
+                    node.metadata.labels[project_id_label] == container.project_id 
+                ):
+                    # could be checked with: kubectl describe node <node-name>
+                    LOG.info(f"found a worker node for network: {node.metadata.name}")
+                    target_node = node
+    
+        if not target_node:
+            LOG.warning((
+                    "K8s containers cannot be attached to Neutron networks because "
+                    "no worker node is associated with this reservation_id %s, "
+                    "ignoring requested_networks = %s"), 
+                    reservation_id, 
+                    requested_networks
+                )
+            return None
+
+        node = target_node
+        bm_interfaces_list = list_network_attachment_definitions(
+            "default", 
+            node.metadata.name,
+        )
+        LOG.info(f"node: {node.metadata.name}, bm_interfaces: {bm_interfaces_list}")
+        if len(bm_interfaces_list) < len(requested_networks):
+            LOG.warning((
+                f"Worker node {node.metadata.name} number of interfaces: "
+                f" {len(bm_interfaces_list)} is not sufficient for this number of " 
+                f"requested networks: {len(requested_networks)}. Aborting network "
+                "attachment.")
+            )
+            return None
+        
+        # check the container labels has networks
+        # format: networks.1.interface, networks.1.ip, networks.2.interface
+        networks_labels  = self.parse_dot_seperated_networks_labels(container.labels)
+        container.labels = self.remove_networks_labels(container.labels)
+        for idx, network in enumerate(requested_networks):
+            network_id = network['network']
+        
+            if str(idx+1) not in networks_labels:
+                LOG.warning((
+                    f"no networks label is set for network {idx+1}" 
+                    " ignoring network attachment."
+                ))
+                continue
+
+            if "interface" not in networks_labels[str(idx+1)]:
+                LOG.warning((
+                    f"no interface specified for network {idx+1}"
+                    " ignoring network attachment."
+                ))
+                continue
+            
+            # check the network has at least one subnet
+            neutron_network = neutron_client.show_network(network_id)
+            neutron_network = neutron_network['network']
+            if not neutron_network['subnets']:
+                LOG.warning((
+                    f"network {network['network']} does not have a subnet "
+                    "it will be ignored for attachment. "
+                ))
+                continue
+            
+            # mapping network to interface using container labels
+            container_labels=networks_labels[str(idx+1)]
+            if container_labels["interface"] not in bm_interfaces_list:
+                LOG.warning((
+                    f"specified interface {container_labels['interface']} is not "
+                    f"registered on {node.metadata.name}, ignoring this network"
+                ))
+                continue
+            bm_interface = container_labels["interface"]
+
+            # if the network has multiple subnets, we only take the first
+            subnet_id = neutron_network['subnets'][0]
+            neutron_subnet = neutron_client.show_subnet(subnet_id)['subnet']
+            # check if container lables asked for static or dhcp
+            if "ip" not in container_labels:
+                # it is dhcp
+                # check if subnet has dhcp, if not, throw warning and ignore
+                if not neutron_subnet['enable_dhcp']:
+                    LOG.warning((
+                        f"dhcp is not enabled for {network['network']} and no "
+                        f"ip is specified for {bm_interface}, ignoring network"
+                    ))
+                    continue
+
+            # if there is an original baremetal port, don't create it
+            # otherwise create it.
+            original_bm_port = self.find_original_bm_port(
+                container.project_id,
+                node.metadata.name,
+                bm_interface,
+            )
+            if original_bm_port:
+                # it means we don't create a baremetal port and node
+                # check if the original one is on the same network and subnet
+                if (
+                    original_bm_port['subnet_id'] != subnet_id or
+                    original_bm_port['network_id'] != network_id
+                ):
+                    LOG.warning((
+                        f"interface {node.metadata.name}:{bm_interface} is already "
+                        "registered with a different subnet or network. Ignoring "
+                        f"the requested network {network['network']}."
+                    ))
+                    continue
+            else:
+                # means we create a baremetal port and node
+                interface_lli_dict = read_network_attachment_definition_config(
+                    'default',
+                    node.metadata.name,
+                    bm_interface,
+                    'local_link_information',
+                )
+
+            # all checks done!
+            # create a random mac address for this interface
+            mac_addr = generate_random_mac_addr()
+           
+            # fix the network_attachment_definition
+            # if it does not exist on the project's namespace create it
+            exists = network_attachment_definition_exists(
+                container.project_id,
+                node.metadata.name,
+                bm_interface,
+            )
+            if not exists:
+                LOG.info((
+                    "cloning network_attachment_definition " 
+                    f"{node.metadata.name}.{bm_interface}"
+                ))
+                clone_network_attachment_definition(
+                    'default', 
+                    container.project_id,
+                    node.metadata.name, 
+                    bm_interface,
+                )
+                        
+            # check if container lables asked for static or dhcp
+            ip_addr=None
+            if "ip" not in container_labels:
+                # set dhcp ipam
+                LOG.info(
+                    f"{network['network']}:{bm_interface}, dhcp is enabled"
+                )
+                # if dhcp is enabled, set ipam to dhcp
+                ipam_dict = {
+                    "type": "dhcp",
+                }
+            else:
+                # it is static, user must provide static address in labels
+                # "ip":"<ip>/<subnet>"
+                ip_addr = container_labels["ip"]
+                LOG.info(
+                    f"{network['network']}:{bm_interface}, static ip setting: {ip_addr}"
+                )
+                ipam_dict = {
+                    "type": "static",
+                    "addresses": [
+                        {
+                            "address": ip_addr,
+                        }
+                    ]
+                }
+                # remove subnet from ip string from now on
+                ip_addr=ip_addr.split('/')[0]
+                
+            # patch ipam to network_attachment_definition
+            patch_network_attachment_definition_plugin(
+                container.project_id,
+                node.metadata.name,
+                bm_interface, 
+                'ipam', 
+                ipam_dict,
+            )
+
+            if not original_bm_port:
+                # create baremetal port in Neutron network
+                # create baremetal port body
+                bm_port_body = {
+                    "name" : mapping.name(container),
+                    "binding-profile": {
+                        "local_link_information" : interface_lli_dict,
+                    }
+                }
+                LOG.info(f"create baremetal port {network['network']}:{bm_interface}")
+                port_annotation = self.create_original_bm_port(
+                    bm_port_body,
+                    network_id,
+                    subnet_id,
+                    node.metadata.name,
+                    bm_interface,
+                    mac_addr,
+                    ip_addr,
+                )
+            else:
+                # create a secondary baremetal port
+                # points to the origianl one
+                # not baremetal, vinc_type:normal
+                bm_port_body = {
+                    "name" : mapping.name(container),
+                }
+                port_annotation = self.create_secondary_bm_port(
+                    bm_port_body,
+                    network_id,
+                    subnet_id,
+                    node.metadata.name,
+                    bm_interface,
+                    mac_addr,
+                    original_bm_port['host_id'],
+                    ip_addr,
+                )
+
+            # create network annotation with new mac_addr
+            network_annotations.append(
+                {
+                    'name':f'{node.metadata.name}.{bm_interface}',
+                    'mac':f"{mac_addr}",
+                }
+            )
+            port_annotations.append(port_annotation)
+
+        return network_annotations, port_annotations
+
+
+    def find_another_secondary_bm_port(self,
+        container,
+        namespace,
+        worker_node,
+        bm_interface,
+    ):
+        
+        try:
+            this_container_id = container.container_id
+        except Exception as e:
+            this_container_id = ''
+
+        pods = client.CoreV1Api().list_pod_for_all_namespaces(watch=False)
+        for pod in pods.items:
+            if not (
+                pod.metadata.namespace == namespace and
+                pod.metadata.name != this_container_id
+            ):
+                continue
+
+            bm_port_annotations = pod.metadata.annotations.get(
+                "zun.openstack.org/baremetalPorts"
+            )
+            if not bm_port_annotations:
+                continue;
+            bm_port_annotations = json.loads(bm_port_annotations)
+            for bm_port in bm_port_annotations:
+                if (
+                    bm_port['worker_node'] == worker_node and
+                    bm_port['bm_interface'] == bm_interface and
+                    (not bm_port['original'])
+                ):
+                    return (bm_port, pod)
+        return (None,None)
+
+        
+    def find_original_bm_port(self,
+        namespace,
+        worker_node,
+        bm_interface,
+    ):
+        pods = client.CoreV1Api().list_pod_for_all_namespaces(watch=False)
+        for pod in pods.items:
+            if not (
+                pod.metadata.namespace == namespace
+            ):
+                continue
+
+            bm_port_annotations = pod.metadata.annotations.get(
+                "zun.openstack.org/baremetalPorts"
+            )
+            if not bm_port_annotations:
+                continue;
+            bm_port_annotations = json.loads(bm_port_annotations)
+            for bm_port in bm_port_annotations:
+                if (
+                    bm_port['worker_node'] == worker_node and
+                    bm_port['bm_interface'] == bm_interface and
+                    bm_port['original']
+                ):
+                    return bm_port
+        return None
+
+    def create_secondary_bm_port(self,
+        port_info,
+        network_uuid,
+        subnet_uuid,
+        worker_node,
+        bm_interface,
+        mac_addr,
+        host_uuid,
+        ip_addr=None,
+    ):
+        neutron_client = self.neutron_client
+
+        # create a port with the requested specs on the new baremetal node
+        port_body = {
+            "port": {
+                "name":port_info["name"],
+                "network_id":network_uuid,
+                "mac_address":mac_addr,
+                "device_owner": "compute:nova",
+                "binding:host_id":host_uuid,
+                "binding:vnic_type":"normal",
+            },
+        }
+        if ip_addr:
+            port_body["port"] = {
+                **port_body["port"],
+                "fixed_ips": [ {
+                    "subnet_id":subnet_uuid,
+                    "ip_address":ip_addr,
+                } ],
+            }
+        port = neutron_client.create_port(port_body)
+        port_id = port["port"]["id"]
+
+        port_annotation = {
+            'name':port_info['name'],
+            'id':port_id,
+            'mac_addr':mac_addr,
+            'host_id':host_uuid,
+            'worker_node':worker_node,
+            'bm_interface':bm_interface,
+            'subnet_id':subnet_uuid,
+            'network_id':network_uuid,
+            'ip':'',
+            'original':False,
+        }
+        if ip_addr:
+            port_annotation['ip'] = ip_addr
+
+        return port_annotation
+
+    def create_original_bm_port(self,
+        port_info,
+        network_uuid,
+        subnet_uuid,
+        worker_node,
+        bm_interface,
+        mac_addr,
+        ip_addr=None,
+        host_uuid=None,
+    ):
+        ironic_client = self.ironic_client
+        neutron_client = self.neutron_client
+
+        if not host_uuid:
+            # create a fake baremetal node for each port
+            node = ironic_client.node.create(driver="ipmi")
+            host_uuid = node.uuid
+
+        # create a port with the requested specs on the new baremetal node
+        port_body = {
+            "port": {
+                "name":port_info["name"],
+                "network_id":network_uuid,
+                "mac_address":mac_addr,
+                "device_owner": "compute:nova",
+                "binding:host_id":host_uuid,
+                "binding:vnic_type":"baremetal",
+                "binding:profile":port_info["binding-profile"],
+            },
+        }
+        if ip_addr:
+            port_body["port"] = {
+                **port_body["port"],
+                "fixed_ips": [ {
+                    "subnet_id":subnet_uuid,
+                    "ip_address":ip_addr,
+                } ],
+            }
+        port = neutron_client.create_port(port_body)
+        port_id = port["port"]["id"]
+        
+        port_annotation = {
+            'name':port_info['name'],
+            'id':port_id,
+            'mac_addr':mac_addr,
+            'host_id':host_uuid,
+            'worker_node':worker_node,
+            'bm_interface':bm_interface,
+            'subnet_id':subnet_uuid,
+            'network_id':network_uuid,
+            'ip':'',
+            'original':True,
+        }
+        if ip_addr:
+            port_annotation['ip'] = ip_addr
+
+        return port_annotation
+
+    def replace_pods_port(self,
+        pod,
+        project_id,
+        old_port,
+        new_port,
+    ):
+        # remember: we do not replace ip,subnet_id and mac_addr
+        bm_port_annotations = pod.metadata.annotations.get(
+            "zun.openstack.org/baremetalPorts"
+        )
+        if not bm_port_annotations:
+            LOG.warning("no baremetalPorts annotation found in the pod")
+            return None
+        bm_port_annotations = json.loads(bm_port_annotations)
+
+        new_annotations = []
+        found_port = False
+        for bm_port in bm_port_annotations:
+            if bm_port['id'] == old_port['id']:
+                found_port = True
+                new_annotations.append(new_port)
+            else:
+                new_annotations.append(bm_port)
+
+        if not found_port:
+            LOG.warning("no port found in the pod to be replaced")
+            return None
+        
+        new_annotations = json.dumps(new_annotations)
+        body = {
+            "metadata":
+            {
+                "annotations": {
+                    "zun.openstack.org/baremetalPorts": new_annotations,
+                }
+            }
+        }
+        LOG.info((
+            "updating pod's baremetalPort annotations, old: "
+            f"{pod.metadata.annotations.get('zun.openstack.org/baremetalPorts')}"
+            f", new: {new_annotations}"
+        ))
+        client.CoreV1Api().patch_namespaced_pod(
+            pod.metadata.name,
+            project_id,
+            body,
+        )
+        return new_annotations
+
+
+    def delete_bm_ports(self, container):
+        ironic_client = self.ironic_client
+        neutron_client = self.neutron_client
+        
+        pod = client.CoreV1Api().read_namespaced_pod(
+            name=container.container_id,
+            namespace=container.project_id,
+        )
+        
+        bm_port_annotations = pod.metadata.annotations.get("zun.openstack.org/baremetalPorts")
+
+        if not bm_port_annotations:
+            LOG.info(f"no baremetal ports associated with the container to delete")
+            return
+   
+        bm_ports = json.loads(bm_port_annotations)
+        for port in bm_ports:
+
+            # check if this port is the original baremetal port
+            if not port['original']:
+                # this is not the original bm port
+                # just delete it
+                try:
+                    neutron_client.delete_port(port['id'])
+                    LOG.info(f"deleted secondary baremetal port {port['name']}:{port['id']}")
+                except Exception as e:
+                    LOG.warning(f"could not delete secondary baremetal port {port['name']}:{port['id']}")
+
+                # go to the next port
+                continue
+
+            # this is an original port
+            # check if there is another secondary port
+            a_secondary_bm_port, the_secondary_ports_pod = self.find_another_secondary_bm_port(
+                container,
+                container.project_id,
+                port["worker_node"],
+                port["bm_interface"],
+            )
+            if not a_secondary_bm_port:
+                # this is the last port and it is original, just delete everything
+                try:
+                    neutron_client.delete_port(port['id'])
+                    LOG.info(f"deleted original baremetal port {port['name']}:{port['id']}")
+                except Exception as e:
+                    LOG.warning(f"could not delete original baremetal port {port['name']}:{port['id']}")
+
+                try:
+                    ironic_client.node.delete(node_id=port['host_id'])
+                    LOG.info(f"deleted fake baremetal node {port['name']}:{port['host_id']}")
+                except Exception as e:
+                    LOG.warning(f"could not delete baremetal node {port['name']}:{port['host_id']}")
+
+                # go to the next port
+                continue
+            else:
+                # this port is original but not the last one
+                # delete both ports, create a new original one with
+                # the name, ip, and mac address of this port
+               
+                # check if lli is available, collect it
+                interface_lli_dict = read_network_attachment_definition_config(
+                    'default',
+                    port["worker_node"],
+                    port["bm_interface"],
+                    'local_link_information',
+                )
+                if not interface_lli_dict:
+                    LOG.warning(f"no lli is available for {node.metadata.name}.{bm_interface}")
+                    continue
+
+                # delete this original port (VLAN membership down)
+                try:
+                    neutron_client.delete_port(port['id'])
+                    LOG.info(f"deleted original baremetal port {port['name']}:{port['id']}")
+                except Exception as e:
+                    LOG.warning(f"could not delete original baremetal port {port['name']}:{port['id']}")
+                
+                # delete the secondary port
+                try:
+                    neutron_client.delete_port(a_secondary_bm_port['id'])
+                    LOG.info(f"deleted secondary baremetal port {port['name']}:{port['id']}")
+                except Exception as e:
+                    LOG.warning(f"could not delete secondary baremetal port {port['name']}:{port['id']}")
+
+                # create a new original port for the secondary pod (VLAN membership up)
+                bm_port_body = {
+                    "name" : a_secondary_bm_port['name'],
+                    "binding-profile": {
+                        "local_link_information" : interface_lli_dict,
+                    }
+                }
+                new_original_bm_port = self.create_original_bm_port(
+                    bm_port_body,
+                    port['network_id'],
+                    port['subnet_id'],
+                    port["worker_node"],
+                    port["bm_interface"],
+                    a_secondary_bm_port["mac_addr"],
+                    a_secondary_bm_port["ip"],
+                    port["host_id"],
+                )
+
+                # attach it to the secondary pod
+                # modify the secondary port's pod annotations
+                # replace the secondary port with the new original port
+                self.replace_pods_port(
+                    the_secondary_ports_pod,
+                    container.project_id,
+                    a_secondary_bm_port,
+                    new_original_bm_port,
+                )
+
+
     def create(self, context, container, image, requested_networks,
                requested_volumes):
         """Create a container."""
-        if requested_networks:
-            LOG.warning((
-                "K8s containers cannot be attached to Neutron networks, ignoring "
-                "requested_networks = %s"), requested_networks)
+
+        def _create_network_annotations():
+            if requested_networks:
+                reservation_id = container.annotations.get(utils.RESERVATION_ANNOTATION)
+                if not reservation_id:
+                    LOG.warning((
+                    "K8s containers cannot be attached to Neutron networks without "
+                    "reservation_id, ignoring requested_networks = %s"), requested_networks)
+                    return (None, None)
+                else:
+                    return self.create_network_attachment_defs(
+                        reservation_id, 
+                        container, 
+                        requested_networks
+                    )
+            else:
+                return (None, None)
+
+        try:
+            network_annotations, port_annotations = _create_network_annotations()
+        except client.ApiException as exc:
+            # The first time we create a deployment for a project there will not yet
+            # be a namespace; handle this and create namespace in this case.
+            if is_exception_like(exc, code=404, kind="namespaces"):
+                self.core_v1.create_namespace(mapping.namespace(container))
+                LOG.info("Auto-created namespace %s", container.project_id)
+                network_annotations, port_annotations = _create_network_annotations()
+            else:
+                raise
 
         def _create_deployment():
             secret_info_list = self._get_secrets_for_image(image["image"], context)
+            map_dep = mapping.deployment(
+                container, image, requested_volumes=requested_volumes,
+                image_pull_secrets=[s["name"] for s in secret_info_list if s["secret"]],
+                requested_networks=requested_networks,
+                network_annotations=network_annotations,
+                port_annotations=port_annotations,
+            )
+            LOG.info(f"Mapping: {map_dep}")
             self.apps_v1.create_namespaced_deployment(
                 container.project_id,
-                mapping.deployment(
-                    container, image, requested_volumes=requested_volumes,
-                    image_pull_secrets=[s["name"] for s in secret_info_list if s["secret"]])
+                map_dep
             )
             LOG.info("Created deployment for %s in %s", container.uuid,
                 container.project_id)
@@ -301,6 +1091,10 @@ class K8sDriver(driver.ContainerDriver, driver.BaseDriver):
 
     def delete(self, context, container, force):
         """Delete a container."""
+        
+        # delete baremetal ports
+        self.delete_bm_ports(container)
+
         name = mapping.name(container)
         try:
             self.apps_v1.delete_namespaced_deployment(name, container.project_id)
@@ -310,6 +1104,7 @@ class K8sDriver(driver.ContainerDriver, driver.BaseDriver):
                 # 404 will be raised of the deployment was already deleted or never
                 # was created in the first place.
                 raise
+
         self.network_driver.disconnect_container_from_network(container, None)
 
     def list(self, context):

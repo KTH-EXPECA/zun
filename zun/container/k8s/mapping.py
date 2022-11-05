@@ -1,5 +1,6 @@
-from oslo_log import log as logging
+import json
 
+from oslo_log import log as logging
 from zun.common import utils
 from zun.conf import CONF
 
@@ -111,7 +112,13 @@ def namespace(container):
     }
 
 
-def deployment(container, image, requested_volumes=None, image_pull_secrets=None):
+def deployment(container, image, 
+    requested_volumes=None, 
+    image_pull_secrets=None, 
+    requested_networks=None, 
+    network_annotations=None,
+    port_annotations=None,
+):
     resources = resources_request(container)
     labels = pod_labels(container)
     env = container_env(container)
@@ -192,6 +199,17 @@ def deployment(container, image, requested_volumes=None, image_pull_secrets=None
                 "configMap": {"name": vol_name},
             })
 
+    annotations = {}
+    if network_annotations:
+        annotations = {
+            "k8s.v1.cni.cncf.io/networks": json.dumps(network_annotations)
+        }
+    if port_annotations:
+        annotations = {
+            **annotations,
+            "zun.openstack.org/baremetalPorts": json.dumps(port_annotations)
+        }
+
     secrets_spec = []
     if image_pull_secrets:
         secrets_spec = [{"name": name} for name in image_pull_secrets]
@@ -209,6 +227,7 @@ def deployment(container, image, requested_volumes=None, image_pull_secrets=None
             "template": {
                 "metadata": {
                     "labels": labels,
+                    "annotations": annotations,
                 },
                 "spec": {
                     "affinity": {

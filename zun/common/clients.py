@@ -14,6 +14,8 @@
 
 from cinderclient import client as cinderclient
 from glanceclient import client as glanceclient
+from ironicclient import client as ironicclient
+
 from keystoneauth1.loading import adapter as ka_adapter
 from neutronclient.v2_0 import client as neutronclient
 
@@ -30,6 +32,7 @@ class OpenStackClients(object):
         self._keystone = None
         self._glance = None
         self._neutron = None
+        self._ironic = None
         self._cinder = None
         self._placement = None
         self._placement_ks_filter = None
@@ -95,6 +98,33 @@ class OpenStackClients(object):
                                              region_name=region_name)
 
         return self._neutron
+
+    @exception.wrap_keystone_exception
+    def ironic(self):
+        if self._ironic:
+            return self._ironic
+
+        session = self.keystone().session
+        if self._get_client_option('ironic', 'ca_file'):
+            session.verify = self._get_client_option('ironic', 'ca_file')
+        if self._get_client_option('ironic', 'insecure'):
+            session.verify = False
+        ironic_api_version = self._get_client_option('ironic', 'ironic_api_version')
+        endpoint_type = self._get_client_option('ironic', 'endpoint_type')
+        region_name = self._get_client_option('ironic', 'region_name')
+
+        kwargs = {
+            'session': session,
+            'endpoint_type': endpoint_type,
+            'region_name': region_name,
+            #'cacert': self._get_client_option('ironic', 'ca_file'),
+            #'insecure': self._get_client_option('ironic', 'insecure'),
+            'os_ironic_api_version': self._get_client_option('ironic', 'ironic_api_microversion'),
+        }
+
+        self._ironic = ironicclient.Client(version=ironic_api_version,**kwargs)
+        return self._ironic
+
 
     @exception.wrap_keystone_exception
     def cinder(self):
