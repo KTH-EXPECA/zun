@@ -681,6 +681,9 @@ class K8sDriver(driver.ContainerDriver, driver.BaseDriver):
         port = neutron_client.create_port(port_body)
         port_id = port["port"]["id"]
 
+        # in dhcp mode, after port creation, the port has an ip
+        ip_addr = port["port"]["fixed_ips"][0]["ip_address"]
+
         port_annotation = {
             'name':port_info['name'],
             'id':port_id,
@@ -690,11 +693,9 @@ class K8sDriver(driver.ContainerDriver, driver.BaseDriver):
             'bm_interface':bm_interface,
             'subnet_id':subnet_uuid,
             'network_id':network_uuid,
-            'ip':'',
+            'ip':ip_addr,
             'original':False,
         }
-        if ip_addr:
-            port_annotation['ip'] = ip_addr
 
         return port_annotation
 
@@ -739,6 +740,9 @@ class K8sDriver(driver.ContainerDriver, driver.BaseDriver):
         port = neutron_client.create_port(port_body)
         port_id = port["port"]["id"]
         
+        # in dhcp mode, after port creation, the port has an ip
+        ip_addr = port["port"]["fixed_ips"][0]["ip_address"]
+
         port_annotation = {
             'name':port_info['name'],
             'id':port_id,
@@ -748,11 +752,9 @@ class K8sDriver(driver.ContainerDriver, driver.BaseDriver):
             'bm_interface':bm_interface,
             'subnet_id':subnet_uuid,
             'network_id':network_uuid,
-            'ip':'',
+            'ip':ip_addr,
             'original':True,
         }
-        if ip_addr:
-            port_annotation['ip'] = ip_addr
 
         return port_annotation
 
