@@ -325,6 +325,34 @@ class K8sDriver(driver.ContainerDriver, driver.BaseDriver):
                     **networks_labels[keys[1]],
                     "ip" : container_labels[whole_key]
                 }
+            if keys[2] == "gateway":
+                networks_labels[keys[1]] = {
+                    **networks_labels[keys[1]],
+                    "gateway" : container_labels[whole_key]
+                }
+            if keys[2] == "routes":
+                res = container_labels[whole_key].split('-')
+                if len(res) == 2:
+                    route_dict = {
+                        "dst": res[0],
+                        "gw": res[1]
+                    }
+                elif len(res) == 1:
+                    route_dict = {
+                        "dst": res[0],
+                    }
+                else:
+                    LOG.warning("bad routes format in networks labels")
+                    return None
+
+                if "routes" in networks_labels[keys[1]]:
+                    networks_labels[keys[1]]["routes"].append(route_dict)
+                else:
+                    networks_labels[keys[1]] = {
+                        **networks_labels[keys[1]],
+                        "routes" : [ route_dict ],
+                    }
+
         return networks_labels
 
     def remove_networks_labels(self, container_labels):
@@ -499,6 +527,7 @@ class K8sDriver(driver.ContainerDriver, driver.BaseDriver):
                         
             # check if container lables asked for static or dhcp
             ip_addr=None
+            gw_addr=None
             if "ip" not in container_labels:
                 # set dhcp ipam
                 LOG.info(
@@ -512,17 +541,35 @@ class K8sDriver(driver.ContainerDriver, driver.BaseDriver):
                 # it is static, user must provide static address in labels
                 # "ip":"<ip>/<subnet>"
                 ip_addr = container_labels["ip"]
+                if "gateway" in container_labels:
+                    gw_addr = container_labels["gateway"]
+                    addresses_dict = {
+                        "address": ip_addr,
+                        "gateway": container_labels["gateway"],
+                    }
+                else:
+                    addresses_dict = {
+                        "address": ip_addr,
+                    }
+
+                if "routes" in container_labels:
+                    ipam_dict = {
+                        "type": "static",
+                        "addresses": [
+                            addresses_dict,
+                        ],
+                        "routes": container_labels["routes"],
+                    }
+                else:
+                    ipam_dict = {
+                        "type": "static",
+                        "addresses": [
+                            addresses_dict,
+                        ],
+                    }
                 LOG.info(
-                    f"{network['network']}:{bm_interface}, static ip setting: {ip_addr}"
+                    f"{network['network']}:{bm_interface}, ipam: {ipam_dict}"
                 )
-                ipam_dict = {
-                    "type": "static",
-                    "addresses": [
-                        {
-                            "address": ip_addr,
-                        }
-                    ]
-                }
                 # remove subnet from ip string from now on
                 ip_addr=ip_addr.split('/')[0]
                 
