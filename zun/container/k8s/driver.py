@@ -360,7 +360,11 @@ class K8sDriver(driver.ContainerDriver, driver.BaseDriver):
         return networks_labels
 
     def remove_networks_labels(self, container_labels):
+        
         new_labels = {}
+        if not container_labels:
+            return new_labels
+
         for whole_key in container_labels:
             new_labels = {**new_labels, whole_key:container_labels[whole_key]}
             keys = whole_key.split('.')
