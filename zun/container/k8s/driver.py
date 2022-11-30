@@ -304,7 +304,11 @@ class K8sDriver(driver.ContainerDriver, driver.BaseDriver):
                 LOG.info(f"Created default network policy for project {project_id}")
 
     def parse_dot_seperated_networks_labels(self, container_labels):
+        
         networks_labels = {}
+        if not container_labels:
+            return networks_labels
+
         for whole_key in container_labels:
             keys = whole_key.split('.')
             if len(keys) <= 2:
