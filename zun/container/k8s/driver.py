@@ -380,7 +380,7 @@ class K8sDriver(driver.ContainerDriver, driver.BaseDriver):
 
         network_annotations = []
         port_annotations = []
-
+            
         neutron_client = self.neutron_client
 
         reservation_id_label = 'blazar.openstack.org/reservation_id'
@@ -430,6 +430,7 @@ class K8sDriver(driver.ContainerDriver, driver.BaseDriver):
         # format: networks.1.interface, networks.1.ip, networks.2.interface
         networks_labels  = self.parse_dot_seperated_networks_labels(container.labels)
         container.labels = self.remove_networks_labels(container.labels)
+        LOG.info(f"Requested networks: {requested_networks}")
         for idx, network in enumerate(requested_networks):
             network_id = network['network']
         
@@ -459,6 +460,7 @@ class K8sDriver(driver.ContainerDriver, driver.BaseDriver):
             
             # mapping network to interface using container labels
             container_labels=networks_labels[str(idx+1)]
+            LOG.info(f"tryng to attach network: {idx+1}, {network}, labels: {container_labels}")
             if container_labels["interface"] not in bm_interfaces_list:
                 LOG.warning((
                     f"specified interface {container_labels['interface']} is not "
