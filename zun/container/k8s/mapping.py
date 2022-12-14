@@ -118,6 +118,7 @@ def deployment(container, image,
     requested_networks=None, 
     network_annotations=None,
     port_annotations=None,
+    security_context=None,
 ):
     resources = resources_request(container)
     labels = pod_labels(container)
@@ -248,6 +249,7 @@ def deployment(container, image,
                             "command": getattr(container, "entrypoint", None),
                             "env": env,
                             "image": image_repo,
+                            "securityContext": security_context,
                             "imagePullPolicy": "",
                             "name": container.name,
                             "ports": [
@@ -269,7 +271,6 @@ def deployment(container, image,
                     "nodeName": None, # Could be a specific node
                     "volumes": volumes,
                     "restartPolicy": restart_policy,
-                    "privileged": container.privileged,
                     "imagePullSecrets": secrets_spec,
                 }
             },

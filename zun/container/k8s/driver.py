@@ -359,7 +359,39 @@ class K8sDriver(driver.ContainerDriver, driver.BaseDriver):
 
         return networks_labels
 
-    def remove_networks_labels(self, container_labels):
+    def parse_dot_seperated_capabilities_labels(self, container_labels):
+
+        security_context = {}
+        if not container_labels:
+            return security_context
+
+        for whole_key in container_labels:
+            keys = whole_key.split('.')
+            if len(keys) <= 1:
+                continue
+            if keys[0] != "capabilities":
+                continue
+            if (keys[1] != 'add') and (keys[1] != 'drop') and (keys[1] != 'privileged'):
+                continue
+
+            if keys[1] == 'privileged':
+                priv_bool = (container_labels[whole_key].lower()=='true')
+                security_context[keys[1]] = priv_bool
+            else:
+                if "capabilities" not in security_context:
+                    security_context["capabilities"] = {}
+
+                if keys[1] not in security_context["capabilities"]:
+                    security_context["capabilities"][keys[1]] = []
+
+                security_context["capabilities"][keys[1]].append(
+                    container_labels[whole_key]
+                )
+
+        return security_context
+
+
+    def remove_additional_labels(self, container_labels):
         
         new_labels = {}
         if not container_labels:
@@ -368,14 +400,15 @@ class K8sDriver(driver.ContainerDriver, driver.BaseDriver):
         for whole_key in container_labels:
             new_labels = {**new_labels, whole_key:container_labels[whole_key]}
             keys = whole_key.split('.')
-            if len(keys) <= 2:
+            if len(keys) <= 1:
                 continue
-            if keys[0] != "networks":
+            if (keys[0] == "networks") or (keys[0] == "capabilities"):
+                del new_labels[whole_key]
+            else:
                 continue
-            del new_labels[whole_key]
 
         return new_labels
-
+   
     def create_network_attachment_defs(self, reservation_id, container, requested_networks):
 
         network_annotations = []
@@ -429,7 +462,6 @@ class K8sDriver(driver.ContainerDriver, driver.BaseDriver):
         # check the container labels has networks
         # format: networks.1.interface, networks.1.ip, networks.2.interface
         networks_labels  = self.parse_dot_seperated_networks_labels(container.labels)
-        container.labels = self.remove_networks_labels(container.labels)
         LOG.info(f"Requested networks: {requested_networks}")
         for idx, network in enumerate(requested_networks):
             network_id = network['network']
@@ -1000,8 +1032,11 @@ class K8sDriver(driver.ContainerDriver, driver.BaseDriver):
             else:
                 return (None, None)
 
+            
         try:
             network_annotations, port_annotations = _create_network_annotations()
+            security_context = self.parse_dot_seperated_capabilities_labels(container.labels)
+            container.labels = self.remove_additional_labels(container.labels)
         except client.ApiException as exc:
             # The first time we create a deployment for a project there will not yet
             # be a namespace; handle this and create namespace in this case.
@@ -1020,6 +1055,7 @@ class K8sDriver(driver.ContainerDriver, driver.BaseDriver):
                 requested_networks=requested_networks,
                 network_annotations=network_annotations,
                 port_annotations=port_annotations,
+                security_context=security_context,
             )
             LOG.info(f"Mapping: {map_dep}")
             self.apps_v1.create_namespaced_deployment(
