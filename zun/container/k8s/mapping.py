@@ -119,8 +119,9 @@ def deployment(container, image,
     network_annotations=None,
     port_annotations=None,
     security_context=None,
+    resources=None,
 ):
-    resources = resources_request(container)
+    #resources = resources_request(container)
     labels = pod_labels(container)
     env = container_env(container)
     liveness_probe = restart_policy = None

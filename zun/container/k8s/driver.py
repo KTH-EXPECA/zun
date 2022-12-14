@@ -390,6 +390,29 @@ class K8sDriver(driver.ContainerDriver, driver.BaseDriver):
 
         return security_context
 
+    def parse_dot_seperated_resources_labels(self, container_labels):
+
+        resources = {}
+        if not container_labels:
+            return resources
+
+        for whole_key in container_labels:
+            keys = whole_key.split('.')
+            if len(keys) <= 2:
+                continue
+            if keys[0] != "resources":
+                continue
+            if (keys[1] != 'limits') and (keys[1] != 'requests'):
+                continue
+            if (keys[2] != 'cpu') and (keys[2] != 'memory'):
+                continue
+
+            if keys[1] not in resources:
+                resources[keys[1]] = {}
+
+            resources[keys[1]][keys[2]] = container_labels[whole_key]
+
+        return resources
 
     def remove_additional_labels(self, container_labels):
         
@@ -402,7 +425,7 @@ class K8sDriver(driver.ContainerDriver, driver.BaseDriver):
             keys = whole_key.split('.')
             if len(keys) <= 1:
                 continue
-            if (keys[0] == "networks") or (keys[0] == "capabilities"):
+            if (keys[0] == "networks") or (keys[0] == "capabilities") or (keys[0] == "resources"):
                 del new_labels[whole_key]
             else:
                 continue
@@ -1036,6 +1059,7 @@ class K8sDriver(driver.ContainerDriver, driver.BaseDriver):
         try:
             network_annotations, port_annotations = _create_network_annotations()
             security_context = self.parse_dot_seperated_capabilities_labels(container.labels)
+            resources = self.parse_dot_seperated_resources_labels(container.labels)
             container.labels = self.remove_additional_labels(container.labels)
         except client.ApiException as exc:
             # The first time we create a deployment for a project there will not yet
@@ -1056,6 +1080,7 @@ class K8sDriver(driver.ContainerDriver, driver.BaseDriver):
                 network_annotations=network_annotations,
                 port_annotations=port_annotations,
                 security_context=security_context,
+                resources=resources,
             )
             LOG.info(f"Mapping: {map_dep}")
             self.apps_v1.create_namespaced_deployment(
