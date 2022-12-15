@@ -315,7 +315,7 @@ class K8sDriver(driver.ContainerDriver, driver.BaseDriver):
                 continue
             if keys[0] != "networks":
                 continue
-            if (not keys[1].isnumeric()) and (keys[1] != 'br'):
+            if (not keys[1].isnumeric()):
                 continue
             if keys[1] not in networks_labels:
                 networks_labels[keys[1]] = {}
