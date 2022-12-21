@@ -246,11 +246,12 @@ class K8sDriver(driver.ContainerDriver, driver.BaseDriver):
                     container = objects.Container.get_by_uuid(context, container_uuid)
                     self._sync_container(container, pod, pod_event=event_type)
                     container.save()
-                    LOG.info(
-                        f"Synced {container_uuid} to k8s state after {event_type} event")
+                    #LOG.info(
+                    #    f"Synced {container_uuid} to k8s state after {event_type} event")
                 except exception.ContainerNotFound:
                     # Just skip this pod, it should be cleaned up on the periodic sync
-                    LOG.info(f"Skipping update on missing container '{container_uuid}'")
+                    #LOG.info(f"Skipping update on missing container '{container_uuid}'")
+                    pass
 
         backoff, max_backoff = 0.0, 128.0
         def _get_backoff(current, maximum):
@@ -301,7 +302,7 @@ class K8sDriver(driver.ContainerDriver, driver.BaseDriver):
                 # to communicate directly with eachother.
                 self.net_v1.create_namespaced_network_policy(
                     ns_name, default_network_policy)
-                LOG.info(f"Created default network policy for project {project_id}")
+                #LOG.info(f"Created default network policy for project {project_id}")
 
     def parse_dot_seperated_networks_labels(self, container_labels):
         
@@ -346,8 +347,8 @@ class K8sDriver(driver.ContainerDriver, driver.BaseDriver):
                         "dst": res[0],
                     }
                 else:
-                    LOG.warning("bad routes format in networks labels")
-                    return None
+                    # "bad routes format in networks labels"
+                    return {}
 
                 if "routes" in networks_labels[keys[1]]:
                     networks_labels[keys[1]]["routes"].append(route_dict)
@@ -444,7 +445,7 @@ class K8sDriver(driver.ContainerDriver, driver.BaseDriver):
         target_node = None
         node_list = self.core_v1.list_node()
         for node in node_list.items:
-            LOG.info(f"node labels: {node.metadata.labels}")
+            # LOG.info(f"node labels: {node.metadata.labels}")
             if (
                 reservation_id_label in node.metadata.labels and
                 project_id_label in node.metadata.labels
@@ -454,17 +455,17 @@ class K8sDriver(driver.ContainerDriver, driver.BaseDriver):
                     node.metadata.labels[project_id_label] == container.project_id 
                 ):
                     # could be checked with: kubectl describe node <node-name>
-                    LOG.info(f"found a worker node for network: {node.metadata.name}")
+                    #LOG.info(f"found a worker node for network: {node.metadata.name}")
                     target_node = node
     
         if not target_node:
-            LOG.warning((
-                    "K8s containers cannot be attached to Neutron networks because "
-                    "no worker node is associated with this reservation_id %s, "
-                    "ignoring requested_networks = %s"), 
-                    reservation_id, 
-                    requested_networks
-                )
+            #LOG.warning((
+            #        "K8s containers cannot be attached to Neutron networks because "
+            #        "no worker node is associated with this reservation_id %s, "
+            #        "ignoring requested_networks = %s"), 
+            #        reservation_id, 
+            #        requested_networks
+            #    )
             return None
 
         node = target_node
@@ -472,55 +473,55 @@ class K8sDriver(driver.ContainerDriver, driver.BaseDriver):
             "default", 
             node.metadata.name,
         )
-        LOG.info(f"node: {node.metadata.name}, bm_interfaces: {bm_interfaces_list}")
+        #LOG.info(f"node: {node.metadata.name}, bm_interfaces: {bm_interfaces_list}")
         if len(bm_interfaces_list) < len(requested_networks):
-            LOG.warning((
-                f"Worker node {node.metadata.name} number of interfaces: "
-                f" {len(bm_interfaces_list)} is not sufficient for this number of " 
-                f"requested networks: {len(requested_networks)}. Aborting network "
-                "attachment.")
-            )
+            #LOG.warning((
+            #    f"Worker node {node.metadata.name} number of interfaces: "
+            #    f" {len(bm_interfaces_list)} is not sufficient for this number of " 
+            #    f"requested networks: {len(requested_networks)}. Aborting network "
+            #    "attachment.")
+            #)
             return None
         
         # check the container labels has networks
         # format: networks.1.interface, networks.1.ip, networks.2.interface
         networks_labels  = self.parse_dot_seperated_networks_labels(container.labels)
-        LOG.info(f"Requested networks: {requested_networks}")
+        #LOG.info(f"Requested networks: {requested_networks}")
         for idx, network in enumerate(requested_networks):
             network_id = network['network']
         
             if str(idx+1) not in networks_labels:
-                LOG.warning((
-                    f"no networks label is set for network {idx+1}" 
-                    " ignoring network attachment."
-                ))
+                #LOG.warning((
+                #    f"no networks label is set for network {idx+1}" 
+                #    " ignoring network attachment."
+                #))
                 continue
 
             if "interface" not in networks_labels[str(idx+1)]:
-                LOG.warning((
-                    f"no interface specified for network {idx+1}"
-                    " ignoring network attachment."
-                ))
+                #LOG.warning((
+                #    f"no interface specified for network {idx+1}"
+                #    " ignoring network attachment."
+                #))
                 continue
             
             # check the network has at least one subnet
             neutron_network = neutron_client.show_network(network_id)
             neutron_network = neutron_network['network']
             if not neutron_network['subnets']:
-                LOG.warning((
-                    f"network {network['network']} does not have a subnet "
-                    "it will be ignored for attachment. "
-                ))
+                #LOG.warning((
+                #    f"network {network['network']} does not have a subnet "
+                #    "it will be ignored for attachment. "
+                #))
                 continue
             
             # mapping network to interface using container labels
             container_labels=networks_labels[str(idx+1)]
-            LOG.info(f"tryng to attach network: {idx+1}, {network}, labels: {container_labels}")
+            #LOG.info(f"tryng to attach network: {idx+1}, {network}, labels: {container_labels}")
             if container_labels["interface"] not in bm_interfaces_list:
-                LOG.warning((
-                    f"specified interface {container_labels['interface']} is not "
-                    f"registered on {node.metadata.name}, ignoring this network"
-                ))
+                #LOG.warning((
+                #    f"specified interface {container_labels['interface']} is not "
+                #    f"registered on {node.metadata.name}, ignoring this network"
+                #))
                 continue
             bm_interface = container_labels["interface"]
 
@@ -532,10 +533,10 @@ class K8sDriver(driver.ContainerDriver, driver.BaseDriver):
                 # it is dhcp
                 # check if subnet has dhcp, if not, throw warning and ignore
                 if not neutron_subnet['enable_dhcp']:
-                    LOG.warning((
-                        f"dhcp is not enabled for {network['network']} and no "
-                        f"ip is specified for {bm_interface}, ignoring network"
-                    ))
+                    #LOG.warning((
+                    #    f"dhcp is not enabled for {network['network']} and no "
+                    #    f"ip is specified for {bm_interface}, ignoring network"
+                    #))
                     continue
 
             # if there is an original baremetal port, don't create it
@@ -552,11 +553,11 @@ class K8sDriver(driver.ContainerDriver, driver.BaseDriver):
                     original_bm_port['subnet_id'] != subnet_id or
                     original_bm_port['network_id'] != network_id
                 ):
-                    LOG.warning((
-                        f"interface {node.metadata.name}:{bm_interface} is already "
-                        "registered with a different subnet or network. Ignoring "
-                        f"the requested network {network['network']}."
-                    ))
+                    #LOG.warning((
+                    #    f"interface {node.metadata.name}:{bm_interface} is already "
+                    #    "registered with a different subnet or network. Ignoring "
+                    #    f"the requested network {network['network']}."
+                    #))
                     continue
             else:
                 # means we create a baremetal port and node
@@ -579,10 +580,10 @@ class K8sDriver(driver.ContainerDriver, driver.BaseDriver):
                 bm_interface,
             )
             if not exists:
-                LOG.info((
-                    "cloning network_attachment_definition " 
-                    f"{node.metadata.name}.{bm_interface}"
-                ))
+                #LOG.info((
+                #    "cloning network_attachment_definition " 
+                #    f"{node.metadata.name}.{bm_interface}"
+                #))
                 clone_network_attachment_definition(
                     'default', 
                     container.project_id,
@@ -595,9 +596,9 @@ class K8sDriver(driver.ContainerDriver, driver.BaseDriver):
             gw_addr=None
             if "ip" not in container_labels:
                 # set dhcp ipam
-                LOG.info(
-                    f"{network['network']}:{bm_interface}, dhcp is enabled"
-                )
+                #LOG.info(
+                #    f"{network['network']}:{bm_interface}, dhcp is enabled"
+                #)
                 # if dhcp is enabled, set ipam to dhcp
                 ipam_dict = {
                     "type": "dhcp",
@@ -632,9 +633,9 @@ class K8sDriver(driver.ContainerDriver, driver.BaseDriver):
                             addresses_dict,
                         ],
                     }
-                LOG.info(
-                    f"{network['network']}:{bm_interface}, ipam: {ipam_dict}"
-                )
+                #LOG.info(
+                #    f"{network['network']}:{bm_interface}, ipam: {ipam_dict}"
+                #)
                 # remove subnet from ip string from now on
                 ip_addr=ip_addr.split('/')[0]
                 
@@ -656,7 +657,7 @@ class K8sDriver(driver.ContainerDriver, driver.BaseDriver):
                         "local_link_information" : interface_lli_dict,
                     }
                 }
-                LOG.info(f"create baremetal port {network['network']}:{bm_interface}")
+                #LOG.info(f"create baremetal port {network['network']}:{bm_interface}")
                 port_annotation = self.create_original_bm_port(
                     bm_port_body,
                     network_id,
@@ -881,7 +882,7 @@ class K8sDriver(driver.ContainerDriver, driver.BaseDriver):
             "zun.openstack.org/baremetalPorts"
         )
         if not bm_port_annotations:
-            LOG.warning("no baremetalPorts annotation found in the pod")
+            #LOG.warning("no baremetalPorts annotation found in the pod")
             return None
         bm_port_annotations = json.loads(bm_port_annotations)
 
@@ -895,7 +896,7 @@ class K8sDriver(driver.ContainerDriver, driver.BaseDriver):
                 new_annotations.append(bm_port)
 
         if not found_port:
-            LOG.warning("no port found in the pod to be replaced")
+            #LOG.warning("no port found in the pod to be replaced")
             return None
         
         new_annotations = json.dumps(new_annotations)
@@ -907,11 +908,11 @@ class K8sDriver(driver.ContainerDriver, driver.BaseDriver):
                 }
             }
         }
-        LOG.info((
-            "updating pod's baremetalPort annotations, old: "
-            f"{pod.metadata.annotations.get('zun.openstack.org/baremetalPorts')}"
-            f", new: {new_annotations}"
-        ))
+        #LOG.info((
+        #    "updating pod's baremetalPort annotations, old: "
+        #    f"{pod.metadata.annotations.get('zun.openstack.org/baremetalPorts')}"
+        #    f", new: {new_annotations}"
+        #))
         client.CoreV1Api().patch_namespaced_pod(
             pod.metadata.name,
             project_id,
@@ -932,7 +933,7 @@ class K8sDriver(driver.ContainerDriver, driver.BaseDriver):
         bm_port_annotations = pod.metadata.annotations.get("zun.openstack.org/baremetalPorts")
 
         if not bm_port_annotations:
-            LOG.info(f"no baremetal ports associated with the container to delete")
+            #LOG.info(f"no baremetal ports associated with the container to delete")
             return
    
         bm_ports = json.loads(bm_port_annotations)
@@ -944,9 +945,10 @@ class K8sDriver(driver.ContainerDriver, driver.BaseDriver):
                 # just delete it
                 try:
                     neutron_client.delete_port(port['id'])
-                    LOG.info(f"deleted secondary baremetal port {port['name']}:{port['id']}")
+                    #LOG.info(f"deleted secondary baremetal port {port['name']}:{port['id']}")
                 except Exception as e:
-                    LOG.warning(f"could not delete secondary baremetal port {port['name']}:{port['id']}")
+                    #LOG.warning(f"could not delete secondary baremetal port {port['name']}:{port['id']}")
+                    pass
 
                 # go to the next port
                 continue
@@ -963,15 +965,17 @@ class K8sDriver(driver.ContainerDriver, driver.BaseDriver):
                 # this is the last port and it is original, just delete everything
                 try:
                     neutron_client.delete_port(port['id'])
-                    LOG.info(f"deleted original baremetal port {port['name']}:{port['id']}")
+                    #LOG.info(f"deleted original baremetal port {port['name']}:{port['id']}")
                 except Exception as e:
-                    LOG.warning(f"could not delete original baremetal port {port['name']}:{port['id']}")
+                    #LOG.warning(f"could not delete original baremetal port {port['name']}:{port['id']}")
+                    pass
 
                 try:
                     ironic_client.node.delete(node_id=port['host_id'])
-                    LOG.info(f"deleted fake baremetal node {port['name']}:{port['host_id']}")
+                    #LOG.info(f"deleted fake baremetal node {port['name']}:{port['host_id']}")
                 except Exception as e:
-                    LOG.warning(f"could not delete baremetal node {port['name']}:{port['host_id']}")
+                    #LOG.warning(f"could not delete baremetal node {port['name']}:{port['host_id']}")
+                    pass
 
                 # go to the next port
                 continue
@@ -988,22 +992,24 @@ class K8sDriver(driver.ContainerDriver, driver.BaseDriver):
                     'local_link_information',
                 )
                 if not interface_lli_dict:
-                    LOG.warning(f"no lli is available for {node.metadata.name}.{bm_interface}")
+                    #LOG.warning(f"no lli is available for {node.metadata.name}.{bm_interface}")
                     continue
 
                 # delete this original port (VLAN membership down)
                 try:
                     neutron_client.delete_port(port['id'])
-                    LOG.info(f"deleted original baremetal port {port['name']}:{port['id']}")
+                    #LOG.info(f"deleted original baremetal port {port['name']}:{port['id']}")
                 except Exception as e:
-                    LOG.warning(f"could not delete original baremetal port {port['name']}:{port['id']}")
+                    #LOG.warning(f"could not delete original baremetal port {port['name']}:{port['id']}")
+                    pass
                 
                 # delete the secondary port
                 try:
                     neutron_client.delete_port(a_secondary_bm_port['id'])
-                    LOG.info(f"deleted secondary baremetal port {port['name']}:{port['id']}")
+                    #LOG.info(f"deleted secondary baremetal port {port['name']}:{port['id']}")
                 except Exception as e:
-                    LOG.warning(f"could not delete secondary baremetal port {port['name']}:{port['id']}")
+                    #LOG.warning(f"could not delete secondary baremetal port {port['name']}:{port['id']}")
+                    pass
 
                 # create a new original port for the secondary pod (VLAN membership up)
                 bm_port_body = {
@@ -1042,9 +1048,9 @@ class K8sDriver(driver.ContainerDriver, driver.BaseDriver):
             if requested_networks:
                 reservation_id = container.annotations.get(utils.RESERVATION_ANNOTATION)
                 if not reservation_id:
-                    LOG.warning((
-                    "K8s containers cannot be attached to Neutron networks without "
-                    "reservation_id, ignoring requested_networks = %s"), requested_networks)
+                    #LOG.warning((
+                    #"K8s containers cannot be attached to Neutron networks without "
+                    #"reservation_id, ignoring requested_networks = %s"), requested_networks)
                     return (None, None)
                 else:
                     return self.create_network_attachment_defs(
@@ -1066,7 +1072,7 @@ class K8sDriver(driver.ContainerDriver, driver.BaseDriver):
             # be a namespace; handle this and create namespace in this case.
             if is_exception_like(exc, code=404, kind="namespaces"):
                 self.core_v1.create_namespace(mapping.namespace(container))
-                LOG.info("Auto-created namespace %s", container.project_id)
+                #LOG.info("Auto-created namespace %s", container.project_id)
                 network_annotations, port_annotations = _create_network_annotations()
             else:
                 raise
@@ -1082,13 +1088,13 @@ class K8sDriver(driver.ContainerDriver, driver.BaseDriver):
                 security_context=security_context,
                 resources=resources,
             )
-            LOG.info(f"Mapping: {map_dep}")
+            #LOG.info(f"Mapping: {map_dep}")
             self.apps_v1.create_namespaced_deployment(
                 container.project_id,
                 map_dep
             )
-            LOG.info("Created deployment for %s in %s", container.uuid,
-                container.project_id)
+            #LOG.info("Created deployment for %s in %s", container.uuid,
+            #    container.project_id)
 
         try:
             _create_deployment()
@@ -1097,7 +1103,7 @@ class K8sDriver(driver.ContainerDriver, driver.BaseDriver):
             # be a namespace; handle this and create namespace in this case.
             if is_exception_like(exc, code=404, kind="namespaces"):
                 self.core_v1.create_namespace(mapping.namespace(container))
-                LOG.info("Auto-created namespace %s", container.project_id)
+                #LOG.info("Auto-created namespace %s", container.project_id)
                 _create_deployment()
             else:
                 raise
@@ -1117,7 +1123,7 @@ class K8sDriver(driver.ContainerDriver, driver.BaseDriver):
         if container.exposed_ports:
             self.net_v1.create_namespaced_network_policy(
                 container.project_id, mapping.exposed_port_network_policy(container))
-            LOG.info("Created port expose networkpolicy for %s", container.uuid)
+            #LOG.info("Created port expose networkpolicy for %s", container.uuid)
 
         return container
 
@@ -1218,7 +1224,7 @@ class K8sDriver(driver.ContainerDriver, driver.BaseDriver):
         name = mapping.name(container)
         try:
             self.apps_v1.delete_namespaced_deployment(name, container.project_id)
-            LOG.info(f"Deleted deployment {name} in {container.project_id}")
+            #LOG.info(f"Deleted deployment {name} in {container.project_id}")
         except client.ApiException as exc:
             if not is_exception_like(exc, code=404):
                 # 404 will be raised of the deployment was already deleted or never
@@ -1330,7 +1336,7 @@ class K8sDriver(driver.ContainerDriver, driver.BaseDriver):
                     "replicas": replicas,
                 }
             })
-        LOG.info("Patched deployment %s to %s replicas", deployment_name, replicas)
+        #LOG.info("Patched deployment %s to %s replicas", deployment_name, replicas)
 
     def pause(self, context, container):
         """Pause a container."""
@@ -1373,7 +1379,7 @@ class K8sDriver(driver.ContainerDriver, driver.BaseDriver):
 
         pod_name = pod.metadata.name
 
-        LOG.info(f"Connecting to pod {pod_name} for: {command}")
+        #LOG.info(f"Connecting to pod {pod_name} for: {command}")
 
         # The get/post exec command expect a websocket interface; the 'stream' helper
         # library helps wrapping up such requests in a websocket and proxying/buffering
@@ -1769,7 +1775,7 @@ class K8sDriver(driver.ContainerDriver, driver.BaseDriver):
         for secret_info in self._get_secrets_for_image(repo, context):
             # Create a new secret for an existing registry
             if secret_info["registry"] and not secret_info["secret"]:
-                LOG.info(f"Creating new secret {secret_info['name']}")
+                #LOG.info(f"Creating new secret {secret_info['name']}")
                 secret = client.V1Secret()
                 secret.metadata = client.V1ObjectMeta(name=secret_info["name"])
                 secret.type = "kubernetes.io/dockerconfigjson"
