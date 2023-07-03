@@ -246,11 +246,13 @@ class K8sDriver(driver.ContainerDriver, driver.BaseDriver):
                     container = objects.Container.get_by_uuid(context, container_uuid)
                     self._sync_container(container, pod, pod_event=event_type)
                     container.save()
-                    #LOG.info(
-                    #    f"Synced {container_uuid} to k8s state after {event_type} event")
+                    # EXPECA LOG
+                    LOG.info(
+                        f"Synced {container_uuid} to k8s state after {event_type} event")
                 except exception.ContainerNotFound:
+                    # EXPECA LOG
                     # Just skip this pod, it should be cleaned up on the periodic sync
-                    #LOG.info(f"Skipping update on missing container '{container_uuid}'")
+                    LOG.info(f"Skipping update on missing container '{container_uuid}'")
                     pass
 
         backoff, max_backoff = 0.0, 128.0
@@ -302,7 +304,8 @@ class K8sDriver(driver.ContainerDriver, driver.BaseDriver):
                 # to communicate directly with eachother.
                 self.net_v1.create_namespaced_network_policy(
                     ns_name, default_network_policy)
-                #LOG.info(f"Created default network policy for project {project_id}")
+                # EXPECA LOG
+                LOG.info(f"Created default network policy for project {project_id}")
 
     def parse_dot_seperated_networks_labels(self, container_labels):
         
@@ -445,7 +448,8 @@ class K8sDriver(driver.ContainerDriver, driver.BaseDriver):
         target_node = None
         node_list = self.core_v1.list_node()
         for node in node_list.items:
-            # LOG.info(f"node labels: {node.metadata.labels}")
+            # EXPECA LOG
+            LOG.info(f"node labels: {node.metadata.labels}")
             if (
                 reservation_id_label in node.metadata.labels and
                 project_id_label in node.metadata.labels
@@ -454,18 +458,20 @@ class K8sDriver(driver.ContainerDriver, driver.BaseDriver):
                     node.metadata.labels[reservation_id_label] == reservation_id and 
                     node.metadata.labels[project_id_label] == container.project_id 
                 ):
+                    # EXPECA LOG
                     # could be checked with: kubectl describe node <node-name>
-                    #LOG.info(f"found a worker node for network: {node.metadata.name}")
+                    LOG.info(f"found a worker node for network: {node.metadata.name}")
                     target_node = node
     
         if not target_node:
-            #LOG.warning((
-            #        "K8s containers cannot be attached to Neutron networks because "
-            #        "no worker node is associated with this reservation_id %s, "
-            #        "ignoring requested_networks = %s"), 
-            #        reservation_id, 
-            #        requested_networks
-            #    )
+            # EXPECA LOG
+            LOG.warning((
+                    "K8s containers cannot be attached to Neutron networks because "
+                    "no worker node is associated with this reservation_id %s, "
+                    "ignoring requested_networks = %s"), 
+                    reservation_id, 
+                    requested_networks
+                )
             return None
 
         node = target_node
@@ -473,14 +479,16 @@ class K8sDriver(driver.ContainerDriver, driver.BaseDriver):
             "default", 
             node.metadata.name,
         )
-        #LOG.info(f"node: {node.metadata.name}, bm_interfaces: {bm_interfaces_list}")
+        # EXPECA LOG
+        LOG.info(f"node: {node.metadata.name}, bm_interfaces: {bm_interfaces_list}")
         if len(bm_interfaces_list) < len(requested_networks):
-            #LOG.warning((
-            #    f"Worker node {node.metadata.name} number of interfaces: "
-            #    f" {len(bm_interfaces_list)} is not sufficient for this number of " 
-            #    f"requested networks: {len(requested_networks)}. Aborting network "
-            #    "attachment.")
-            #)
+            # EXPECA LOG
+            LOG.warning((
+                f"Worker node {node.metadata.name} number of interfaces: "
+                f" {len(bm_interfaces_list)} is not sufficient for this number of " 
+                f"requested networks: {len(requested_networks)}. Aborting network "
+                "attachment.")
+            )
             return None
         
         # check the container labels has networks
@@ -491,52 +499,64 @@ class K8sDriver(driver.ContainerDriver, driver.BaseDriver):
             network_id = network['network']
         
             if str(idx+1) not in networks_labels:
-                #LOG.warning((
-                #    f"no networks label is set for network {idx+1}" 
-                #    " ignoring network attachment."
-                #))
+                # EXPECA LOG
+                LOG.warning((
+                    f"no networks label is set for network {idx+1}" 
+                    " ignoring network attachment."
+                ))
                 continue
 
             if "interface" not in networks_labels[str(idx+1)]:
-                #LOG.warning((
-                #    f"no interface specified for network {idx+1}"
-                #    " ignoring network attachment."
-                #))
+                # EXPECA LOG
+                LOG.warning((
+                    f"no interface specified for network {idx+1}"
+                    " ignoring network attachment."
+                ))
                 continue
             
             # check the network has at least one subnet
             neutron_network = neutron_client.show_network(network_id)
             neutron_network = neutron_network['network']
             if not neutron_network['subnets']:
-                #LOG.warning((
-                #    f"network {network['network']} does not have a subnet "
-                #    "it will be ignored for attachment. "
-                #))
+                # EXPECA LOG
+                LOG.warning((
+                    f"network {network['network']} does not have a subnet "
+                    "it will be ignored for attachment. "
+                ))
                 continue
             
             # mapping network to interface using container labels
             container_labels=networks_labels[str(idx+1)]
-            #LOG.info(f"tryng to attach network: {idx+1}, {network}, labels: {container_labels}")
+            # EXPECA LOG
+            LOG.info(f"tryng to attach network: {idx+1}, {network}, labels: {container_labels}")
             if container_labels["interface"] not in bm_interfaces_list:
-                #LOG.warning((
-                #    f"specified interface {container_labels['interface']} is not "
-                #    f"registered on {node.metadata.name}, ignoring this network"
-                #))
+                # EXPECA LOG
+                LOG.warning((
+                    f"specified interface {container_labels['interface']} is not "
+                    f"registered on {node.metadata.name}, ignoring this network"
+                ))
                 continue
+
             bm_interface = container_labels["interface"]
+            # EXPECA LOG
+            LOG.info(f"choosing {bm_interface} as the interface")
 
             # if the network has multiple subnets, we only take the first
             subnet_id = neutron_network['subnets'][0]
             neutron_subnet = neutron_client.show_subnet(subnet_id)['subnet']
+            # EXPECA LOG
+            LOG.info(f"choosing subnet id: {subnet_id} and neutron_subnet: {neutron_subnet}")
+
             # check if container lables asked for static or dhcp
             if "ip" not in container_labels:
                 # it is dhcp
                 # check if subnet has dhcp, if not, throw warning and ignore
                 if not neutron_subnet['enable_dhcp']:
-                    #LOG.warning((
-                    #    f"dhcp is not enabled for {network['network']} and no "
-                    #    f"ip is specified for {bm_interface}, ignoring network"
-                    #))
+                    # EXPECA LOG
+                    LOG.warning((
+                        f"dhcp is not enabled for {network['network']} and no "
+                        f"ip is specified for {bm_interface}, ignoring network"
+                    ))
                     continue
 
             # if there is an original baremetal port, don't create it
@@ -547,19 +567,26 @@ class K8sDriver(driver.ContainerDriver, driver.BaseDriver):
                 bm_interface,
             )
             if original_bm_port:
+                # EXPECA LOG
+                LOG.info(f"using the original baremetal port {original_bm_port}")
+
                 # it means we don't create a baremetal port and node
                 # check if the original one is on the same network and subnet
                 if (
                     original_bm_port['subnet_id'] != subnet_id or
                     original_bm_port['network_id'] != network_id
                 ):
-                    #LOG.warning((
-                    #    f"interface {node.metadata.name}:{bm_interface} is already "
-                    #    "registered with a different subnet or network. Ignoring "
-                    #    f"the requested network {network['network']}."
-                    #))
+                    # EXPECA LOG
+                    LOG.warning((
+                        f"interface {node.metadata.name}:{bm_interface} is already "
+                        "registered with a different subnet or network. Ignoring "
+                        f"the requested network {network['network']}."
+                    ))
                     continue
             else:
+                # EXPECA LOG
+                LOG.info("choosing to create a baremetal port and node")
+
                 # means we create a baremetal port and node
                 interface_lli_dict = read_network_attachment_definition_config(
                     'default',
@@ -568,9 +595,15 @@ class K8sDriver(driver.ContainerDriver, driver.BaseDriver):
                     'local_link_information',
                 )
 
+                # EXPECA LOG
+                LOG.info(f"interface lli dict: {interface_lli_dict}")
+
             # all checks done!
             # create a random mac address for this interface
             mac_addr = generate_random_mac_addr()
+                
+            # EXPECA LOG
+            LOG.info(f"generated random mac address: {mac_addr}")
            
             # fix the network_attachment_definition
             # if it does not exist on the project's namespace create it
@@ -580,25 +613,30 @@ class K8sDriver(driver.ContainerDriver, driver.BaseDriver):
                 bm_interface,
             )
             if not exists:
-                #LOG.info((
-                #    "cloning network_attachment_definition " 
-                #    f"{node.metadata.name}.{bm_interface}"
-                #))
+                # EXPECA LOG
+                LOG.info((
+                    "cloning network_attachment_definition " 
+                    f"{node.metadata.name}.{bm_interface}"
+                ))
                 clone_network_attachment_definition(
                     'default', 
                     container.project_id,
                     node.metadata.name, 
                     bm_interface,
                 )
+            else:
+                # EXPECA LOG
+                LOG.info(f"found network_attachment_definition for project {container.project_id}: {node.metadata.name}.{bm_interface}")
                         
             # check if container lables asked for static or dhcp
             ip_addr=None
             gw_addr=None
             if "ip" not in container_labels:
                 # set dhcp ipam
-                #LOG.info(
-                #    f"{network['network']}:{bm_interface}, dhcp is enabled"
-                #)
+                # EXPECA LOG
+                LOG.info(
+                    f"{network['network']}:{bm_interface}, dhcp is enabled"
+                )
                 # if dhcp is enabled, set ipam to dhcp
                 ipam_dict = {
                     "type": "dhcp",
@@ -607,6 +645,10 @@ class K8sDriver(driver.ContainerDriver, driver.BaseDriver):
                 # it is static, user must provide static address in labels
                 # "ip":"<ip>/<subnet>"
                 ip_addr = container_labels["ip"]
+                # EXPECA LOG
+                LOG.info(
+                    f"{network['network']}:{bm_interface}, static ip selected: {ip_addr}"
+                )
                 if "gateway" in container_labels:
                     gw_addr = container_labels["gateway"]
                     addresses_dict = {
@@ -633,9 +675,10 @@ class K8sDriver(driver.ContainerDriver, driver.BaseDriver):
                             addresses_dict,
                         ],
                     }
-                #LOG.info(
-                #    f"{network['network']}:{bm_interface}, ipam: {ipam_dict}"
-                #)
+                # EXPECA LOG
+                LOG.info(
+                    f"{network['network']}:{bm_interface}, ipam: {ipam_dict}"
+                )
                 # remove subnet from ip string from now on
                 ip_addr=ip_addr.split('/')[0]
                 
@@ -657,7 +700,8 @@ class K8sDriver(driver.ContainerDriver, driver.BaseDriver):
                         "local_link_information" : interface_lli_dict,
                     }
                 }
-                #LOG.info(f"create baremetal port {network['network']}:{bm_interface}")
+                # EXPECA LOG
+                LOG.info(f"create original baremetal port {network['network']}:{bm_interface} -> bm_port_body={bm_port_body}")
                 port_annotation = self.create_original_bm_port(
                     bm_port_body,
                     network_id,
@@ -667,6 +711,8 @@ class K8sDriver(driver.ContainerDriver, driver.BaseDriver):
                     mac_addr,
                     ip_addr,
                 )
+                # EXPECA LOG
+                LOG.info(f"created original_bm_port, port_annotation: {port_annotation}")
             else:
                 # create a secondary baremetal port
                 # points to the origianl one
@@ -674,6 +720,8 @@ class K8sDriver(driver.ContainerDriver, driver.BaseDriver):
                 bm_port_body = {
                     "name" : mapping.name(container),
                 }
+                # EXPECA LOG
+                LOG.info(f"create secondary baremetal port {network['network']}:{bm_interface} -> bm_port_body={bm_port_body}")
                 port_annotation = self.create_secondary_bm_port(
                     bm_port_body,
                     network_id,
@@ -684,6 +732,8 @@ class K8sDriver(driver.ContainerDriver, driver.BaseDriver):
                     original_bm_port['host_id'],
                     ip_addr,
                 )
+                # EXPECA LOG
+                LOG.info(f"created secondry bm port, port_annotation: {port_annotation}")
 
             # create network annotation with new mac_addr
             network_annotations.append(
@@ -882,7 +932,8 @@ class K8sDriver(driver.ContainerDriver, driver.BaseDriver):
             "zun.openstack.org/baremetalPorts"
         )
         if not bm_port_annotations:
-            #LOG.warning("no baremetalPorts annotation found in the pod")
+            # EXPECA LOG
+            LOG.warning("no baremetalPorts annotation found in the pod")
             return None
         bm_port_annotations = json.loads(bm_port_annotations)
 
@@ -896,7 +947,8 @@ class K8sDriver(driver.ContainerDriver, driver.BaseDriver):
                 new_annotations.append(bm_port)
 
         if not found_port:
-            #LOG.warning("no port found in the pod to be replaced")
+            # EXPECA LOG
+            LOG.warning("no port found in the pod to be replaced")
             return None
         
         new_annotations = json.dumps(new_annotations)
@@ -908,11 +960,12 @@ class K8sDriver(driver.ContainerDriver, driver.BaseDriver):
                 }
             }
         }
-        #LOG.info((
-        #    "updating pod's baremetalPort annotations, old: "
-        #    f"{pod.metadata.annotations.get('zun.openstack.org/baremetalPorts')}"
-        #    f", new: {new_annotations}"
-        #))
+        # EXPECA LOG
+        LOG.info((
+            "updating pod's baremetalPort annotations, old: "
+            f"{pod.metadata.annotations.get('zun.openstack.org/baremetalPorts')}"
+            f", new: {new_annotations}"
+        ))
         client.CoreV1Api().patch_namespaced_pod(
             pod.metadata.name,
             project_id,
@@ -933,7 +986,8 @@ class K8sDriver(driver.ContainerDriver, driver.BaseDriver):
         bm_port_annotations = pod.metadata.annotations.get("zun.openstack.org/baremetalPorts")
 
         if not bm_port_annotations:
-            #LOG.info(f"no baremetal ports associated with the container to delete")
+            # EXPECA LOG
+            LOG.info(f"no baremetal ports associated with the container to delete")
             return
    
         bm_ports = json.loads(bm_port_annotations)
@@ -945,9 +999,11 @@ class K8sDriver(driver.ContainerDriver, driver.BaseDriver):
                 # just delete it
                 try:
                     neutron_client.delete_port(port['id'])
-                    #LOG.info(f"deleted secondary baremetal port {port['name']}:{port['id']}")
+                    # EXPECA LOG
+                    LOG.info(f"deleted secondary baremetal port {port['name']}:{port['id']}")
                 except Exception as e:
-                    #LOG.warning(f"could not delete secondary baremetal port {port['name']}:{port['id']}")
+                    # EXPECA LOG
+                    LOG.warning(f"could not delete secondary baremetal port {port['name']}:{port['id']}")
                     pass
 
                 # go to the next port
@@ -965,16 +1021,20 @@ class K8sDriver(driver.ContainerDriver, driver.BaseDriver):
                 # this is the last port and it is original, just delete everything
                 try:
                     neutron_client.delete_port(port['id'])
-                    #LOG.info(f"deleted original baremetal port {port['name']}:{port['id']}")
+                    # EXPECA LOG
+                    LOG.info(f"deleted original baremetal port {port['name']}:{port['id']}")
                 except Exception as e:
-                    #LOG.warning(f"could not delete original baremetal port {port['name']}:{port['id']}")
+                    # EXPECA LOG
+                    LOG.warning(f"could not delete original baremetal port {port['name']}:{port['id']}")
                     pass
 
                 try:
                     ironic_client.node.delete(node_id=port['host_id'])
-                    #LOG.info(f"deleted fake baremetal node {port['name']}:{port['host_id']}")
+                    # EXPECA LOG
+                    LOG.info(f"deleted fake baremetal node {port['name']}:{port['host_id']}")
                 except Exception as e:
-                    #LOG.warning(f"could not delete baremetal node {port['name']}:{port['host_id']}")
+                    # EXPECA LOG
+                    LOG.warning(f"could not delete baremetal node {port['name']}:{port['host_id']}")
                     pass
 
                 # go to the next port
@@ -992,23 +1052,28 @@ class K8sDriver(driver.ContainerDriver, driver.BaseDriver):
                     'local_link_information',
                 )
                 if not interface_lli_dict:
-                    #LOG.warning(f"no lli is available for {node.metadata.name}.{bm_interface}")
+                    # EXPECA LOG
+                    LOG.warning(f"no lli is available for {node.metadata.name}.{bm_interface}")
                     continue
 
                 # delete this original port (VLAN membership down)
                 try:
                     neutron_client.delete_port(port['id'])
-                    #LOG.info(f"deleted original baremetal port {port['name']}:{port['id']}")
+                    # EXPECA LOG
+                    LOG.info(f"deleted original baremetal port {port['name']}:{port['id']}")
                 except Exception as e:
-                    #LOG.warning(f"could not delete original baremetal port {port['name']}:{port['id']}")
+                    # EXPECA LOG
+                    LOG.warning(f"could not delete original baremetal port {port['name']}:{port['id']}")
                     pass
                 
                 # delete the secondary port
                 try:
                     neutron_client.delete_port(a_secondary_bm_port['id'])
-                    #LOG.info(f"deleted secondary baremetal port {port['name']}:{port['id']}")
+                    # EXPECA LOG
+                    LOG.info(f"deleted secondary baremetal port {port['name']}:{port['id']}")
                 except Exception as e:
-                    #LOG.warning(f"could not delete secondary baremetal port {port['name']}:{port['id']}")
+                    # EXPECA LOG
+                    LOG.warning(f"could not delete secondary baremetal port {port['name']}:{port['id']}")
                     pass
 
                 # create a new original port for the secondary pod (VLAN membership up)
@@ -1072,7 +1137,8 @@ class K8sDriver(driver.ContainerDriver, driver.BaseDriver):
             # be a namespace; handle this and create namespace in this case.
             if is_exception_like(exc, code=404, kind="namespaces"):
                 self.core_v1.create_namespace(mapping.namespace(container))
-                #LOG.info("Auto-created namespace %s", container.project_id)
+                # EXPECA LOG
+                LOG.info("Auto-created namespace %s", container.project_id)
                 network_annotations, port_annotations = _create_network_annotations()
             else:
                 raise
@@ -1088,13 +1154,15 @@ class K8sDriver(driver.ContainerDriver, driver.BaseDriver):
                 security_context=security_context,
                 resources=resources,
             )
-            #LOG.info(f"Mapping: {map_dep}")
+            # EXPECA LOG
+            LOG.info(f"Mapping: {map_dep}")
             self.apps_v1.create_namespaced_deployment(
                 container.project_id,
                 map_dep
             )
-            #LOG.info("Created deployment for %s in %s", container.uuid,
-            #    container.project_id)
+            # EXPECA LOG
+            LOG.info("Created deployment for %s in %s", container.uuid,
+                container.project_id)
 
         try:
             _create_deployment()
@@ -1123,7 +1191,8 @@ class K8sDriver(driver.ContainerDriver, driver.BaseDriver):
         if container.exposed_ports:
             self.net_v1.create_namespaced_network_policy(
                 container.project_id, mapping.exposed_port_network_policy(container))
-            #LOG.info("Created port expose networkpolicy for %s", container.uuid)
+            # EXPECA LOG
+            LOG.info("Created port expose networkpolicy for %s", container.uuid)
 
         return container
 
@@ -1224,7 +1293,8 @@ class K8sDriver(driver.ContainerDriver, driver.BaseDriver):
         name = mapping.name(container)
         try:
             self.apps_v1.delete_namespaced_deployment(name, container.project_id)
-            #LOG.info(f"Deleted deployment {name} in {container.project_id}")
+            # EXPECA LOG
+            LOG.info(f"Deleted deployment {name} in {container.project_id}")
         except client.ApiException as exc:
             if not is_exception_like(exc, code=404):
                 # 404 will be raised of the deployment was already deleted or never
@@ -1251,6 +1321,10 @@ class K8sDriver(driver.ContainerDriver, driver.BaseDriver):
 
             if container.status in (consts.DELETED):
                 if matching_deployment:
+                    
+                    # delete baremetal ports
+                    self.delete_bm_ports(container)
+
                     # Clean up the orphan deployment
                     self.apps_v1.delete_namespaced_deployment(
                         matching_deployment.metadata.name, container.project_id)
