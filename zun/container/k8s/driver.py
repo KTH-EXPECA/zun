@@ -224,7 +224,8 @@ class K8sDriver(driver.ContainerDriver, driver.BaseDriver):
         k8s_network.init(admin_context, self.net_v1)
         self.network_driver = k8s_network
 
-        self.volume_driver = volume.K8sConfigMap(self.core_v1)
+        #self.volume_driver = volume.K8sConfigMap(self.core_v1)
+        self.volume_driver = volume.K8sCinder(self.core_v1)
 
         utils.spawn_n(self._watch_pods, admin_context)
 

@@ -66,3 +66,36 @@ class K8sConfigMap(VolumeDriver):
 
     def is_volume_deleted(self, context, volmap):
         return True, False
+
+
+class K8sCinder(VolumeDriver):
+    supported_providers = ['cinder']
+
+    def __init__(self, k8s_core_v1: "client.CoreV1Api"):
+        self.k8s_core_v1 = k8s_core_v1
+
+    @validate_volume_provider(supported_providers)
+    def attach(self, context, volmap):
+        LOG.info("Attach cinder volume %s", volmap)
+
+    @validate_volume_provider(supported_providers)
+    def detach(self, context, volmap):
+        LOG.info("Dettach cinder volume %s", volmap)
+
+    @validate_volume_provider(supported_providers)
+    def delete(self, context, volmap):
+        # There is no difference b/w detach and delete for this type of mount
+        return self.detach(context, volmap)
+
+    @validate_volume_provider(supported_providers)
+    def bind_mount(self, context, volmap):
+        LOG.info("Bind mount cinder volume %s", volmap)
+
+    def is_volume_available(self, context, volmap):
+        # This function is mostly used to know if, after attaching, the volume is ready.
+        # For k8s, that is always true; once the ConfigMap exists, it's ready.
+        return True, False
+
+    def is_volume_deleted(self, context, volmap):
+        return True, False
+

@@ -18,6 +18,7 @@ k8s_group = cfg.OptGroup(name='k8s',
 
 k8s_opts = [
     cfg.StrOpt('kubeconfig_file', help='Kubeconfig file to use for calls to k8s'),
+    cfg.StrOpt('iscsi_target_portal', help='IP:Port for the cinder iscsi target portal'),
     cfg.MultiStrOpt('device_profile_mappings',
                     help=('Mappings from device_profile names to k8s Device Plugin '
                           'resource annotations. Format should be '

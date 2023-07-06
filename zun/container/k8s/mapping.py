@@ -188,17 +188,21 @@ def deployment(container, image,
     volume_mounts = []
     if requested_volumes:
         for volmap in requested_volumes.get(container.uuid, []):
-            # TODO: need to detect what the volume provider is and not use configmap
-            # in the 'volumes' configuration, instead use PersistentVolume claim.
             vol_name = config_map_name(volmap)
             volume_mounts.append({
                 "name": vol_name,
-                "subPath": "file",  # We always store 1 binaryData key and it is 'file'
                 "mountPath": volmap.container_path,
             })
             volumes.append({
                 "name": vol_name,
-                "configMap": {"name": vol_name},
+                "iscsi": {
+                    "name": vol_name,
+                    "targetPortal": CONF.k8s.iscsi_target_portal,
+                    "iqn": "iqn.2010-10.org.openstack:volume-" + volmap.cinder_volume_id,
+                    "lun": 1,
+                    "fsType": "ext4",
+                    "readOnly": False,
+                },
             })
 
     annotations = {}
